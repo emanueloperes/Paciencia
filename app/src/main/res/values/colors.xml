@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Cores usadas antes do Compose desenhar (janela inicial e ícone). -->
+    <color name="mesa">#109D58</color>
+    <color name="verde_escuro">#00391C</color>
+    <color name="menta">#5CFF9F</color>
+</resources>
