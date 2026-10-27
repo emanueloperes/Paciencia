@@ -1,12 +1,11 @@
 package com.emanueloperes.paciencia.ui.game
 
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.VectorConverter
-import androidx.compose.animation.core.VisibilityThreshold
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -54,10 +53,11 @@ import kotlin.math.roundToInt
 
 private val Gap = 3.dp
 
-// Molas no estilo do Material 3 Expressive: rápidas, com um leve assentamento no fim.
-private val MoveSpring = spring(dampingRatio = 0.78f, stiffness = Spring.StiffnessMediumLow, visibilityThreshold = Dp.VisibilityThreshold)
-private val FlipSpring = spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMedium, visibilityThreshold = 0.5f)
-private val LiftSpring = spring<Float>(dampingRatio = 0.6f, stiffness = Spring.StiffnessMedium)
+// Curvas fixas e curtas: a carta chega rápido e desacelera no fim, sem passar do lugar.
+private val MoveSpec = tween<Dp>(durationMillis = 180, easing = FastOutSlowInEasing)
+private val FlipSpec = tween<Float>(durationMillis = 160, easing = FastOutSlowInEasing)
+private val LiftSpec = tween<Float>(durationMillis = 120, easing = FastOutSlowInEasing)
+private val HopSpec = tween<Float>(durationMillis = 170, easing = FastOutSlowInEasing)
 
 /** Uma carta da mesa com a posição que ela deve ocupar. */
 private data class PlacedCard(val card: Card, val column: Int, val index: Int, val position: DpOffset, val isTop: Boolean)
@@ -117,7 +117,7 @@ fun Table(
         state.completed.forEachIndexed { i, suit ->
             key("completed-$i") {
                 val scale = remember { Animatable(1.4f) }
-                LaunchedEffect(Unit) { scale.animateTo(1f, LiftSpring) }
+                LaunchedEffect(Unit) { scale.animateTo(1f, tween(220, easing = FastOutSlowInEasing)) }
                 PlayingCard(
                     Card(id = -1 - i, rank = Card.KING, suit = suit, faceUp = true),
                     cardWidth,
@@ -139,7 +139,7 @@ fun Table(
                 state.stock[0].copy(faceUp = false),
                 cardWidth,
                 Modifier.offset(x = stockPosition.x - cardWidth * 0.2f * (state.dealsLeft - 1 - i)),
-                highlighted = isTop && hint == Move.Deal,
+                glowing = isTop && hint == Move.Deal,
                 onClick = if (isTop) onStockTap else null,
             )
         }
@@ -163,10 +163,8 @@ fun Table(
         for (p in placed) {
             key(p.card.id) {
                 val dragged = drag?.let { it.from == p.column && p.index >= it.index } == true
-                val highlighted = (p.column in dragTargets && p.isTop) || hintTransfer != null && (
-                    (hintTransfer.from == p.column && p.index >= hintTransfer.index) ||
-                        (hintTransfer.to == p.column && p.isTop)
-                    )
+                val hintedSource = hintTransfer?.let { it.from == p.column && p.index >= it.index } == true
+                val hintedTarget = hintTransfer?.to == p.column && p.isTop
                 AnimatedCard(
                     card = p.card,
                     width = cardWidth,
@@ -175,7 +173,11 @@ fun Table(
                     // Na mesa inicial as cartas chegam em leque; ao distribuir, uma coluna por vez.
                     enterDelayMillis = p.column * 30 + if (state.moves == 0) p.index * 60 else 0,
                     z = p.index,
-                    highlighted = highlighted,
+                    highlighted = p.column in dragTargets && p.isTop,
+                    hinted = hintedSource || hintedTarget,
+                    // O destino pula logo depois das cartas sugeridas, como se as recebesse.
+                    hintDelayMillis = if (hintedTarget) 140 else 0,
+                    dimmed = p.card.faceUp && !Rules.canPickUp(state, p.column, p.index),
                     dragOffset = if (dragged) drag?.offset else null,
                     onClick = { onCardTap(p.column, p.index) },
                     onDragStart = {
@@ -223,6 +225,9 @@ private fun AnimatedCard(
     enterDelayMillis: Int,
     z: Int,
     highlighted: Boolean,
+    hinted: Boolean,
+    hintDelayMillis: Int,
+    dimmed: Boolean,
     dragOffset: Offset?,
     onClick: () -> Unit,
     onDragStart: () -> Unit,
@@ -252,16 +257,30 @@ private fun AnimatedCard(
         }
         if (!entered) delay(enterDelayMillis.toLong())
         entered = true
-        launch { x.animateTo(target.x, MoveSpring) }
-        launch { y.animateTo(target.y, MoveSpring) }
+        launch { x.animateTo(target.x, MoveSpec) }
+        launch { y.animateTo(target.y, MoveSpec) }
     }
     LaunchedEffect(card.faceUp, entered) {
-        if (entered) flip.animateTo(if (card.faceUp) 0f else 180f, FlipSpring)
+        if (entered) flip.animateTo(if (card.faceUp) 0f else 180f, FlipSpec)
+    }
+
+    // Dica: as cartas dão três pulinhos e crescem um pouco a cada um.
+    val hop = remember { Animatable(0f) }
+    LaunchedEffect(hinted) {
+        if (!hinted) {
+            hop.snapTo(0f)
+            return@LaunchedEffect
+        }
+        delay(hintDelayMillis.toLong())
+        repeat(3) {
+            hop.animateTo(1f, HopSpec)
+            hop.animateTo(0f, HopSpec)
+        }
     }
 
     // Ao pegar, a carta "levanta": cresce um pouco e ganha sombra.
-    val lift by animateFloatAsState(if (dragging) 1.08f else 1f, LiftSpring, label = "lift")
-    val elevation by animateDpAsState(if (dragging) 10.dp else 1.dp, label = "elevation")
+    val lift by animateFloatAsState(if (dragging) 1.08f else 1f, LiftSpec, label = "lift")
+    val elevation by animateDpAsState(if (dragging) 10.dp else 1.dp, tween(120, easing = FastOutSlowInEasing), label = "elevation")
 
     val currentOnDragStart by rememberUpdatedState(onDragStart)
     val currentOnDrag by rememberUpdatedState(onDrag)
@@ -273,6 +292,8 @@ private fun AnimatedCard(
         card = if ((flip.value < 90f) == card.faceUp) card else card.copy(faceUp = flip.value < 90f),
         width = width,
         highlighted = highlighted,
+        glowing = hinted,
+        dimmed = dimmed && !dragging,
         elevation = elevation,
         onClick = onClick,
         modifier = Modifier
@@ -289,8 +310,9 @@ private fun AnimatedCard(
                 },
             )
             .graphicsLayer {
-                scaleX = lift
-                scaleY = lift
+                scaleX = lift * (1f + 0.06f * hop.value)
+                scaleY = lift * (1f + 0.06f * hop.value)
+                translationY = -hop.value * (width * 0.2f).toPx()
                 // Entre 90° e 180° o verso aparece espelhado; o padrão é simétrico, então não importa.
                 rotationY = flip.value
                 cameraDistance = 12f * density

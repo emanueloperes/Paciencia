@@ -21,6 +21,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -70,6 +71,10 @@ fun PlayingCard(
     width: Dp,
     modifier: Modifier = Modifier,
     highlighted: Boolean = false,
+    /** Carta aberta que não pode ser movida (fora da sequência do topo): fica mais escura. */
+    dimmed: Boolean = false,
+    /** Carta indicada pela dica: borda mais grossa e brilho menta. */
+    glowing: Boolean = false,
     elevation: Dp = 1.dp,
     onClick: (() -> Unit)? = null,
 ) {
@@ -83,6 +88,7 @@ fun PlayingCard(
         else -> FaceMenta
     }
     val outline = when {
+        glowing -> Modifier.border(3.dp, colors.highlight, shape)
         highlighted -> Modifier.border(2.dp, colors.highlight, shape)
         // Contorno separa os versos empilhados na coluna.
         !card.faceUp && style == DeckStyle.EXPRESSIVE -> Modifier.border(1.5.dp, VerdeEscuro.copy(alpha = 0.6f), shape)
@@ -94,8 +100,15 @@ fun PlayingCard(
             .width(width)
             .aspectRatio(CARD_ASPECT_RATIO)
             .upwardShadow(width)
-            .shadow(elevation, shape)
+            .then(
+                if (glowing) Modifier.shadow(10.dp, shape, ambientColor = colors.highlight, spotColor = colors.highlight)
+                else Modifier.shadow(elevation, shape),
+            )
             .clip(shape)
+            .drawWithContent {
+                drawContent()
+                if (dimmed) drawRect(DimOverlay)
+            }
             .background(background)
             .then(outline)
             .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
@@ -127,6 +140,8 @@ private fun Modifier.upwardShadow(width: Dp) = drawBehind {
         size = Size(size.width - inset * 2, height),
     )
 }
+
+private val DimOverlay = Color(0x6600210E)
 
 @Composable
 private fun Dp.asSp(): TextUnit = with(LocalDensity.current) { this@asSp.toSp() }
@@ -176,12 +191,18 @@ private val SuitPathData = mapOf(
 
 private val SuitPaths: Map<Suit, Path> = SuitPathData.mapValues { PathParser().parsePathString(it.value).toPath() }
 
+/**
+ * Desenha o naipe. Com [solidBase], espadas e paus ganham a base preenchida: no naipe
+ * gigante a borda da carta corta bem nas reentrâncias do cabo, que viravam fiapos brancos.
+ */
 @Composable
-private fun SuitShape(suit: Suit, color: Color, modifier: Modifier) {
+private fun SuitShape(suit: Suit, color: Color, modifier: Modifier, solidBase: Boolean = false) {
     val path = SuitPaths.getValue(suit)
+    val fillBase = solidBase && (suit == Suit.SPADES || suit == Suit.CLUBS)
     Canvas(modifier) {
         scale(size.width / 100f, size.height / 100f, pivot = Offset.Zero) {
             drawPath(path, color)
+            if (fillBase) drawRect(color, topLeft = Offset(22f, 62f), size = Size(56f, 38f))
         }
     }
 }
@@ -194,8 +215,9 @@ private fun ExpressiveFace(card: Card, width: Dp) {
         // Naipe gigante com uma largura de carta, vazando pelo canto inferior direito.
         SuitShape(
             card.suit,
-            ink.copy(alpha = 0.94f),
+            ink,
             Modifier.offset(x = width * 0.28f, y = width * 0.66f).size(width),
+            solidBase = true,
         )
         Text(
             card.rankLabel(),
