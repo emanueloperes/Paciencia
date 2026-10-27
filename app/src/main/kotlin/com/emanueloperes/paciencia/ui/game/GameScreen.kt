@@ -38,6 +38,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -58,6 +60,20 @@ fun GameScreen(viewModel: GameViewModel, onExit: () -> Unit, onNewGame: (Difficu
     LifecycleResumeEffect(viewModel) {
         viewModel.setActive(true)
         onPauseOrDispose { viewModel.setActive(false) }
+    }
+    val haptics = LocalHapticFeedback.current
+    LaunchedEffect(viewModel) {
+        viewModel.events.collect { event ->
+            haptics.performHapticFeedback(
+                when (event) {
+                    GameEvent.MOVED -> HapticFeedbackType.SegmentTick
+                    GameEvent.DEALT, GameEvent.HINT -> HapticFeedbackType.ContextClick
+                    GameEvent.UNDONE -> HapticFeedbackType.VirtualKey
+                    GameEvent.SET_COMPLETED, GameEvent.WON -> HapticFeedbackType.Confirm
+                    GameEvent.INVALID -> HapticFeedbackType.Reject
+                },
+            )
+        }
     }
     LaunchedEffect(state.message) {
         state.message?.let {

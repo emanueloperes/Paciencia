@@ -38,7 +38,9 @@ private val LightTable = TableColors(
 private val DarkTable = LightTable.copy(
     table = VerdeEscuro,
     bar = VerdeNoturno,
-    cardBack = VerdeFloresta,
+    // No escuro o verso precisa se destacar da mesa verde-escura.
+    cardBack = VerdeBase,
+    emptySlot = VerdeFloresta,
 )
 
 val LocalTableColors = staticCompositionLocalOf { LightTable }

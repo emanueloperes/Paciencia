@@ -41,6 +41,7 @@ fun PlayingCard(
     width: Dp,
     modifier: Modifier = Modifier,
     highlighted: Boolean = false,
+    elevation: Dp = 1.dp,
     onClick: (() -> Unit)? = null,
 ) {
     val colors = LocalTableColors.current
@@ -49,10 +50,17 @@ fun PlayingCard(
         modifier
             .width(width)
             .aspectRatio(CARD_ASPECT_RATIO)
-            .shadow(1.dp, shape)
+            .shadow(elevation, shape)
             .clip(shape)
             .background(if (card.faceUp) colors.cardFace else colors.cardBack)
-            .then(if (highlighted) Modifier.border(2.dp, colors.highlight, shape) else Modifier)
+            .then(
+                when {
+                    highlighted -> Modifier.border(2.dp, colors.highlight, shape)
+                    // Contorno fino separa os versos empilhados na coluna.
+                    !card.faceUp -> Modifier.border(0.75.dp, colors.cardBackPattern.copy(alpha = 0.5f), shape)
+                    else -> Modifier
+                },
+            )
             .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
             .semantics { contentDescription = if (card.faceUp) card.spokenName() else "Carta virada para baixo" },
     ) {
@@ -64,12 +72,12 @@ fun PlayingCard(
 private fun CardFace(card: Card, width: Dp) {
     val colors = LocalTableColors.current
     val ink = if (card.suit.isRed) colors.redSuit else colors.blackSuit
-    val corner = with(LocalDensity.current) { (width * 0.3f).toSp() }
+    val corner = with(LocalDensity.current) { (width * 0.34f).toSp() }
     val center = with(LocalDensity.current) { (width * 0.55f).toSp() }
     Text(
         text = "${card.rankLabel()}${card.suit.symbol}",
-        style = TextStyle(color = ink, fontSize = corner, fontWeight = FontWeight.Medium, lineHeight = corner),
-        modifier = Modifier.padding(start = width * 0.08f, top = width * 0.04f),
+        style = TextStyle(color = ink, fontSize = corner, fontWeight = FontWeight.Bold, lineHeight = corner),
+        modifier = Modifier.padding(start = width * 0.07f, top = width * 0.03f),
     )
     Box(Modifier.fillMaxSize().padding(top = width * 0.25f), contentAlignment = Alignment.Center) {
         Text(card.suit.symbol, style = TextStyle(color = ink, fontSize = center, lineHeight = center))

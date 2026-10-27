@@ -13,7 +13,10 @@ import com.emanueloperes.paciencia.engine.Move
 import com.emanueloperes.paciencia.engine.Rules
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.filterNotNull
@@ -22,6 +25,9 @@ import kotlinx.coroutines.launch
 import kotlin.random.Random
 import kotlin.time.TimeMark
 import kotlin.time.TimeSource
+
+/** Acontecimentos pontuais da partida, usados para dar retorno tátil. */
+enum class GameEvent { MOVED, DEALT, UNDONE, HINT, SET_COMPLETED, WON, INVALID }
 
 data class GameUiState(
     val loaded: Boolean = false,
@@ -47,6 +53,9 @@ class GameViewModel(private val store: GameStore) : ViewModel() {
     private var ticker: Job? = null
 
     private var hintIndex = 0
+
+    private val _events = MutableSharedFlow<GameEvent>(extraBufferCapacity = 8)
+    val events: SharedFlow<GameEvent> = _events.asSharedFlow()
 
     /** Último pedido de gravação; null dentro do pedido significa apagar a partida salva. */
     private data class SaveRequest(val game: StoredGame?)
@@ -83,7 +92,11 @@ class GameViewModel(private val store: GameStore) : ViewModel() {
     /** Toque numa carta: move para o melhor destino, se houver. */
     fun tap(column: Int, index: Int) {
         val current = session ?: return
-        val target = Hints.bestTarget(current.state, column, index) ?: return
+        val target = Hints.bestTarget(current.state, column, index)
+        if (target == null) {
+            _events.tryEmit(GameEvent.INVALID)
+            return
+        }
         play(Move.Transfer(column, index, target))
     }
 
@@ -91,7 +104,7 @@ class GameViewModel(private val store: GameStore) : ViewModel() {
     fun drop(from: Int, index: Int, to: Int) {
         val current = session ?: return
         val move = Move.Transfer(from, index, to)
-        if (Rules.isLegal(current.state, move)) play(move)
+        if (Rules.isLegal(current.state, move)) play(move) else _events.tryEmit(GameEvent.INVALID)
     }
 
     fun deal() {
@@ -99,6 +112,7 @@ class GameViewModel(private val store: GameStore) : ViewModel() {
         if (Rules.canDeal(current.state)) {
             play(Move.Deal)
         } else if (current.state.stock.isNotEmpty()) {
+            _events.tryEmit(GameEvent.INVALID)
             showMessage("Preencha as colunas vazias antes de distribuir")
         }
     }
@@ -108,6 +122,7 @@ class GameViewModel(private val store: GameStore) : ViewModel() {
         if (!current.canUndo) return
         hintIndex = 0
         _state.update { it.copy(session = current.undo(), hint = null) }
+        _events.tryEmit(GameEvent.UNDONE)
         requestSave()
     }
 
@@ -116,10 +131,12 @@ class GameViewModel(private val store: GameStore) : ViewModel() {
         val current = session ?: return
         val suggestions = Hints.suggestions(current.state)
         if (suggestions.isEmpty()) {
+            _events.tryEmit(GameEvent.INVALID)
             showMessage("Não há jogadas úteis. Desfaça ou comece outra partida.")
             return
         }
         _state.update { it.copy(hint = suggestions[hintIndex % suggestions.size]) }
+        _events.tryEmit(GameEvent.HINT)
         hintIndex++
     }
 
@@ -136,7 +153,16 @@ class GameViewModel(private val store: GameStore) : ViewModel() {
     private fun play(move: Move) {
         val current = session ?: return
         hintIndex = 0
-        _state.update { it.copy(session = current.play(move), hint = null) }
+        val next = current.play(move)
+        _state.update { it.copy(session = next, hint = null) }
+        _events.tryEmit(
+            when {
+                next.state.isWon -> GameEvent.WON
+                next.state.completed.size > current.state.completed.size -> GameEvent.SET_COMPLETED
+                move == Move.Deal -> GameEvent.DEALT
+                else -> GameEvent.MOVED
+            },
+        )
         updateClock()
         requestSave()
     }

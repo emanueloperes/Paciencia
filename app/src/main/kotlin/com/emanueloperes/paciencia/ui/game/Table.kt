@@ -1,12 +1,15 @@
 package com.emanueloperes.paciencia.ui.game
 
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.VectorConverter
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.VisibilityThreshold
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.aspectRatio
@@ -25,8 +28,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.IntOffset
@@ -46,14 +52,23 @@ import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
-private val Gap = 4.dp
-private val EmphasizedDecelerate = CubicBezierEasing(0.05f, 0.7f, 0.1f, 1f)
-private const val MOVE_MILLIS = 300
+private val Gap = 3.dp
+
+// Molas no estilo do Material 3 Expressive: rápidas, com um leve assentamento no fim.
+private val MoveSpring = spring(dampingRatio = 0.78f, stiffness = Spring.StiffnessMediumLow, visibilityThreshold = Dp.VisibilityThreshold)
+private val FlipSpring = spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMedium, visibilityThreshold = 0.5f)
+private val LiftSpring = spring<Float>(dampingRatio = 0.6f, stiffness = Spring.StiffnessMedium)
+
+/** Uma carta da mesa com a posição que ela deve ocupar. */
+private data class PlacedCard(val card: Card, val column: Int, val index: Int, val position: DpOffset, val isTop: Boolean)
+
+/** Cartas sendo arrastadas: a partir de [index] na coluna [from], deslocadas [offset] pixels. */
+private data class DragState(val from: Int, val index: Int, val offset: Offset)
 
 /**
  * A mesa: conjuntos completos e monte em cima, as 10 colunas embaixo.
- * Todas as cartas ficam numa mesma camada, posicionadas pelo id, para que
- * mudar de coluna seja só uma animação de posição.
+ * Todas as cartas são irmãs numa única lista com chave pelo id: assim, ao mudar
+ * de coluna, a carta continua sendo o mesmo elemento e só anima a posição.
  */
 @Composable
 fun Table(
@@ -66,7 +81,8 @@ fun Table(
 ) {
     var drag by remember { mutableStateOf<DragState?>(null) }
     val density = LocalDensity.current
-    BoxWithConstraints(modifier.fillMaxSize().padding(horizontal = 4.dp, vertical = 8.dp)) {
+    val haptics = LocalHapticFeedback.current
+    BoxWithConstraints(modifier.fillMaxSize().padding(horizontal = 2.dp, vertical = 8.dp)) {
         val columns = Rules.COLUMNS
         // Em paisagem a altura limita o tamanho da carta; a mesa fica centralizada.
         val byWidth = (maxWidth - Gap * (columns - 1)) / columns
@@ -85,25 +101,32 @@ fun Table(
             (0 until columns).filter { Rules.isLegal(state, Move.Transfer(d.from, d.index, it)) }.toSet()
         }.orEmpty()
 
-        fun dropColumn(d: DragState): Int {
-            val draggedX = columnX(d.from) + with(density) { d.offset.x.toDp() }
-            return (0 until columns).minBy { abs((columnX(it) - draggedX).value) }
-        }
-
         fun endDrag() {
             val d = drag ?: return
             drag = null
-            val to = dropColumn(d)
-            if (to != d.from && Rules.isLegal(state, Move.Transfer(d.from, d.index, to))) onCardDrop(d.from, d.index, to)
+            val draggedX = columnX(d.from) + with(density) { d.offset.x.toDp() }
+            val to = (0 until columns).minBy { abs((columnX(it) - draggedX).value) }
+            when {
+                to == d.from -> Unit // Soltou no mesmo lugar: só volta.
+                Rules.isLegal(state, Move.Transfer(d.from, d.index, to)) -> onCardDrop(d.from, d.index, to)
+                else -> haptics.performHapticFeedback(HapticFeedbackType.Reject)
+            }
         }
 
-        // Conjuntos completos: um Rei de cada, sobrepostos.
+        // Conjuntos completos: um Rei de cada, sobrepostos; o mais novo entra com um salto.
         state.completed.forEachIndexed { i, suit ->
-            PlayingCard(
-                Card(id = -1 - i, rank = Card.KING, suit = suit, faceUp = true),
-                cardWidth,
-                Modifier.offset(x = columnX(0) + cardWidth * 0.3f * i),
-            )
+            key("completed-$i") {
+                val scale = remember { Animatable(1.4f) }
+                LaunchedEffect(Unit) { scale.animateTo(1f, LiftSpring) }
+                PlayingCard(
+                    Card(id = -1 - i, rank = Card.KING, suit = suit, faceUp = true),
+                    cardWidth,
+                    Modifier
+                        .offset(x = columnX(0) + cardWidth * 0.3f * i)
+                        .zIndex(i.toFloat())
+                        .graphicsLayer { scaleX = scale.value; scaleY = scale.value },
+                )
+            }
         }
 
         // Monte: um verso por distribuição restante, abrindo para a esquerda.
@@ -126,36 +149,47 @@ fun Table(
             EmptySlot(cardWidth, DpOffset(columnX(column), tableauTop), highlightSlot)
         }
 
-        for (column in 0 until columns) {
-            val cards = state.tableau[column]
-            val offsets = columnOffsets(cards, cardHeight, maxHeight - tableauTop)
-            cards.forEachIndexed { index, card ->
-                key(card.id) {
-                    val isTop = index == cards.lastIndex
-                    val dragged = drag?.let { it.from == column && index >= it.index } == true
-                    val highlighted = (column in dragTargets && isTop) || hintTransfer != null && (
-                        (hintTransfer.from == column && index >= hintTransfer.index) ||
-                            (hintTransfer.to == column && isTop)
-                        )
-                    AnimatedCard(
-                        card = card,
-                        width = cardWidth,
-                        target = DpOffset(columnX(column), tableauTop + offsets[index]),
-                        enterFrom = stockPosition,
-                        // Na mesa inicial as cartas chegam em leque; ao distribuir, uma coluna por vez.
-                        enterDelayMillis = column * 30 + if (state.moves == 0) index * 60 else 0,
-                        z = index,
-                        highlighted = highlighted,
-                        dragOffset = if (dragged) drag?.offset else null,
-                        onClick = { onCardTap(column, index) },
-                        onDragStart = {
-                            if (Rules.canPickUp(state, column, index)) drag = DragState(column, index, Offset.Zero)
-                        },
-                        onDrag = { delta -> drag = drag?.let { it.copy(offset = it.offset + delta) } },
-                        onDragEnd = { endDrag() },
-                        onDragCancel = { drag = null },
-                    )
+        val placed = buildList {
+            for (column in 0 until columns) {
+                val cards = state.tableau[column]
+                val offsets = columnOffsets(cards, cardHeight, maxHeight - tableauTop)
+                cards.forEachIndexed { index, card ->
+                    val position = DpOffset(columnX(column), tableauTop + offsets[index])
+                    add(PlacedCard(card, column, index, position, isTop = index == cards.lastIndex))
                 }
+            }
+        }
+
+        for (p in placed) {
+            key(p.card.id) {
+                val dragged = drag?.let { it.from == p.column && p.index >= it.index } == true
+                val highlighted = (p.column in dragTargets && p.isTop) || hintTransfer != null && (
+                    (hintTransfer.from == p.column && p.index >= hintTransfer.index) ||
+                        (hintTransfer.to == p.column && p.isTop)
+                    )
+                AnimatedCard(
+                    card = p.card,
+                    width = cardWidth,
+                    target = p.position,
+                    enterFrom = stockPosition,
+                    // Na mesa inicial as cartas chegam em leque; ao distribuir, uma coluna por vez.
+                    enterDelayMillis = p.column * 30 + if (state.moves == 0) p.index * 60 else 0,
+                    z = p.index,
+                    highlighted = highlighted,
+                    dragOffset = if (dragged) drag?.offset else null,
+                    onClick = { onCardTap(p.column, p.index) },
+                    onDragStart = {
+                        if (Rules.canPickUp(state, p.column, p.index)) {
+                            drag = DragState(p.column, p.index, Offset.Zero)
+                            haptics.performHapticFeedback(HapticFeedbackType.GestureThresholdActivate)
+                        } else {
+                            haptics.performHapticFeedback(HapticFeedbackType.Reject)
+                        }
+                    },
+                    onDrag = { delta -> drag = drag?.let { it.copy(offset = it.offset + delta) } },
+                    onDragEnd = { endDrag() },
+                    onDragCancel = { drag = null },
+                )
             }
         }
     }
@@ -166,8 +200,8 @@ fun Table(
  * mais juntas; se a coluna não couber, o espaçamento todo é comprimido.
  */
 private fun columnOffsets(cards: List<Card>, cardHeight: Dp, available: Dp): List<Dp> {
-    val down = cardHeight * 0.14f
-    val up = cardHeight * 0.3f
+    val down = cardHeight * 0.16f
+    val up = cardHeight * 0.32f
     val natural = cards.dropLast(1).fold(0.dp) { acc, card -> acc + if (card.faceUp) up else down }
     val room = available - cardHeight
     val scale = if (natural > room && natural > 0.dp) (room / natural).coerceAtLeast(0.05f) else 1f
@@ -176,9 +210,6 @@ private fun columnOffsets(cards: List<Card>, cardHeight: Dp, available: Dp): Lis
         y.also { y += (if (card.faceUp) up else down) * scale }
     }
 }
-
-/** Cartas sendo arrastadas: a partir de [index] na coluna [from], deslocadas [offset] pixels. */
-private data class DragState(val from: Int, val index: Int, val offset: Offset)
 
 /** Último deslocamento de arraste da carta, para ela partir de onde foi solta. */
 private class DragMemory(var last: Offset = Offset.Zero)
@@ -199,9 +230,11 @@ private fun AnimatedCard(
     onDragEnd: () -> Unit,
     onDragCancel: () -> Unit,
 ) {
-    val density = LocalDensity.current
+    val localDensity = LocalDensity.current
     val x = remember { Animatable(enterFrom.x, Dp.VectorConverter) }
     val y = remember { Animatable(enterFrom.y, Dp.VectorConverter) }
+    // Toda carta nasce de costas (saindo do monte) e vira se precisar: 180° = verso, 0° = frente.
+    val flip = remember { Animatable(180f) }
     var entered by remember { mutableStateOf(false) }
     val memory = remember { DragMemory() }
     if (dragOffset != null) memory.last = dragOffset
@@ -211,19 +244,24 @@ private fun AnimatedCard(
         if (dragging) return@LaunchedEffect
         if (memory.last != Offset.Zero) {
             // Acabou de ser solta: continua do ponto onde o dedo largou, seja para o destino ou de volta.
-            with(density) {
+            with(localDensity) {
                 x.snapTo(x.value + memory.last.x.toDp())
                 y.snapTo(y.value + memory.last.y.toDp())
             }
             memory.last = Offset.Zero
         }
-        // Só a primeira animação (saindo do monte) espera, para as cartas chegarem uma a uma.
         if (!entered) delay(enterDelayMillis.toLong())
         entered = true
-        val spec = tween<Dp>(MOVE_MILLIS, easing = EmphasizedDecelerate)
-        launch { x.animateTo(target.x, spec) }
-        launch { y.animateTo(target.y, spec) }
+        launch { x.animateTo(target.x, MoveSpring) }
+        launch { y.animateTo(target.y, MoveSpring) }
     }
+    LaunchedEffect(card.faceUp, entered) {
+        if (entered) flip.animateTo(if (card.faceUp) 0f else 180f, FlipSpring)
+    }
+
+    // Ao pegar, a carta "levanta": cresce um pouco e ganha sombra.
+    val lift by animateFloatAsState(if (dragging) 1.08f else 1f, LiftSpring, label = "lift")
+    val elevation by animateDpAsState(if (dragging) 10.dp else 1.dp, label = "elevation")
 
     val currentOnDragStart by rememberUpdatedState(onDragStart)
     val currentOnDrag by rememberUpdatedState(onDrag)
@@ -231,9 +269,11 @@ private fun AnimatedCard(
     val currentOnDragCancel by rememberUpdatedState(onDragCancel)
     val moving = x.isRunning || y.isRunning || !entered
     PlayingCard(
-        card = card,
+        // Passou da metade do giro: mostra a frente.
+        card = if ((flip.value < 90f) == card.faceUp) card else card.copy(faceUp = flip.value < 90f),
         width = width,
         highlighted = highlighted,
+        elevation = elevation,
         onClick = onClick,
         modifier = Modifier
             .offset {
@@ -248,6 +288,13 @@ private fun AnimatedCard(
                     else -> z.toFloat()
                 },
             )
+            .graphicsLayer {
+                scaleX = lift
+                scaleY = lift
+                // Entre 90° e 180° o verso aparece espelhado; o padrão é simétrico, então não importa.
+                rotationY = flip.value
+                cameraDistance = 12f * density
+            }
             .pointerInput(Unit) {
                 detectDragGestures(
                     onDragStart = { currentOnDragStart() },
