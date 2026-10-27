@@ -22,6 +22,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import com.emanueloperes.paciencia.BuildConfig
 import com.emanueloperes.paciencia.engine.Card
 import com.emanueloperes.paciencia.engine.Difficulty
 import com.emanueloperes.paciencia.engine.Suit
@@ -77,6 +78,13 @@ fun HomeScreen(
                 }
             }
         }
+        Spacer(Modifier.height(24.dp))
+        // Versão visível para conferir se a atualização foi instalada.
+        Text(
+            "Versão ${BuildConfig.VERSION_NAME}",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
+        )
     }
 }
 
