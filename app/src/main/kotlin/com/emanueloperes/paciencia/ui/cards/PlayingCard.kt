@@ -6,7 +6,6 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
@@ -19,6 +18,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
@@ -29,12 +29,13 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.drawscope.scale
+import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
@@ -166,11 +167,32 @@ private fun MinimalBack() {
 
 // --- Baralho expressivo ---
 
-/** Formas do Material 3 Expressive aproximadas por raio ondulado: r(θ) = R·(1 + a·cos(nθ)). */
-private enum class BadgeShape(val lobes: Int, val amplitude: Float) {
-    COOKIE(9, 0.075f),
-    CLOVER(4, 0.16f),
-    SUNNY(12, 0.05f),
+/** Desenhos dos naipes numa caixa 100×100, iguais aos da página de proposta do baralho. */
+private val SuitPathData = mapOf(
+    Suit.HEARTS to "M50 90C20 68 5 52 5 33 5 18 16 8 30 8c9 0 16 5 20 13 4-8 11-13 20-13 14 0 25 10 25 25 0 19-15 35-45 57z",
+    Suit.DIAMONDS to "M50 3c10 16 24 32 40 47-16 15-30 31-40 47C40 81 26 65 10 50 26 35 40 19 50 3z",
+    Suit.SPADES to "M50 5C40 22 9 37 9 60c0 13 10 22 22 22 8 0 14-4 17-9-1 9-4 16-11 22h26c-7-6-10-13-11-22 3 5 9 9 17 9 12 0 22-9 22-22C91 37 60 22 50 5z",
+    Suit.CLUBS to "M50 8a19 19 0 0 1 15 31 19 19 0 1 1 3 33c-7 0-13-3-16-8 1 10 4 17 11 22H37c7-5 10-12 11-22-3 5-9 8-16 8a19 19 0 1 1 3-33A19 19 0 0 1 50 8z",
+)
+
+private val SuitPaths: Map<Suit, Path> = SuitPathData.mapValues { PathParser().parsePathString(it.value).toPath() }
+
+/** Ponto "cheio" de cada naipe (na caixa 100×100) onde fica a letra das figuras. */
+private val SuitCenter = mapOf(
+    Suit.HEARTS to Offset(42f, 40f),
+    Suit.DIAMONDS to Offset(44f, 50f),
+    Suit.SPADES to Offset(43f, 58f),
+    Suit.CLUBS to Offset(42f, 54f),
+)
+
+@Composable
+private fun SuitShape(suit: Suit, color: Color, modifier: Modifier) {
+    val path = SuitPaths.getValue(suit)
+    Canvas(modifier) {
+        scale(size.width / 100f, size.height / 100f, pivot = Offset.Zero) {
+            drawPath(path, color)
+        }
+    }
 }
 
 @Composable
@@ -178,19 +200,17 @@ private fun ExpressiveFace(card: Card, width: Dp) {
     val ink = if (card.suit.isRed) VermelhoSuave else VerdeEscuro
     val face = if (card.suit.isRed) FaceRosa else FaceMenta
     val value = (width * 0.44f).asSp()
-    val smallSuit = (width * 0.24f).asSp()
     Box(Modifier.fillMaxSize()) {
-        // Arte primeiro, para o índice ficar por cima quando a carta for estreita.
-        when (card.rank) {
-            Card.ACE -> Badge(BadgeShape.SUNNY, card.suit.symbol, ink, face, width, Modifier.align(Alignment.BottomEnd))
-            11, 13 -> Badge(BadgeShape.COOKIE, card.rankLabel(), ink, face, width, Modifier.align(Alignment.BottomEnd))
-            12 -> Badge(BadgeShape.CLOVER, card.rankLabel(), ink, face, width, Modifier.align(Alignment.BottomEnd))
-            else -> {
-                val big = (width * 1.15f).asSp()
+        // Naipe gigante com uma largura de carta, vazando pelo canto inferior direito.
+        Box(Modifier.offset(x = width * 0.28f, y = width * 0.66f).size(width)) {
+            SuitShape(card.suit, ink.copy(alpha = 0.94f), Modifier.fillMaxSize())
+            if (card.rank > 10) {
+                val center = SuitCenter.getValue(card.suit)
+                val letter = (width * 0.36f).asSp()
                 Text(
-                    card.suit.symbol,
-                    style = TextStyle(color = ink.copy(alpha = 0.92f), fontSize = big, lineHeight = big),
-                    modifier = Modifier.align(Alignment.BottomEnd).offset(x = width * 0.24f, y = width * 0.3f),
+                    card.rankLabel(),
+                    style = TextStyle(color = face, fontSize = letter, lineHeight = letter, fontWeight = FontWeight.Black),
+                    modifier = Modifier.align(BiasAlignment(center.x / 50f - 1f, center.y / 50f - 1f)),
                 )
             }
         }
@@ -205,39 +225,17 @@ private fun ExpressiveFace(card: Card, width: Dp) {
             ),
             modifier = Modifier.padding(start = width * 0.08f, top = width * 0.03f),
         )
-        Text(
-            card.suit.symbol,
-            style = TextStyle(color = ink, fontSize = smallSuit, lineHeight = smallSuit),
-            modifier = Modifier.padding(start = width * 0.1f, top = width * 0.5f),
-        )
+        SuitShape(card.suit, ink, Modifier.offset(x = width * 0.09f, y = width * 0.49f).size(width * 0.24f))
     }
 }
 
-/** Forma colorida que vaza pelo canto inferior direito, com a letra ou o naipe dentro. */
+/** Forma "biscoito" do Material 3 Expressive, aproximada por raio ondulado: r(θ) = R·(1 + a·cos(9θ)). */
 @Composable
-private fun Badge(shape: BadgeShape, label: String, color: Color, labelColor: Color, width: Dp, modifier: Modifier) {
-    val size = width * 0.82f
-    Box(modifier.offset(x = width * 0.14f, y = width * 0.12f).size(size)) {
-        ShapeCanvas(shape, color, Modifier.fillMaxSize())
-        val text = (width * 0.4f).asSp()
-        Row(Modifier.fillMaxSize().padding(end = size * 0.12f, bottom = size * 0.1f), verticalAlignment = Alignment.CenterVertically) {
-            Spacer(Modifier.weight(1f))
-            Text(
-                label,
-                style = TextStyle(color = labelColor, fontSize = text, lineHeight = text, fontWeight = FontWeight.Black, textAlign = TextAlign.Center),
-            )
-            Spacer(Modifier.weight(1f))
-        }
-    }
-}
-
-@Composable
-private fun ShapeCanvas(shape: BadgeShape, color: Color, modifier: Modifier) {
-    // Pontos da forma num quadrado unitário; escalados no desenho.
-    val points = remember(shape) {
+private fun CookieShape(color: Color, modifier: Modifier) {
+    val points = remember {
         (0 until 120).map { i ->
             val t = i / 120.0 * 2 * PI
-            val r = 0.44 * (1 + shape.amplitude * cos(shape.lobes * t))
+            val r = 0.44 * (1 + 0.075 * cos(9 * t))
             Offset((0.5 + r * cos(t)).toFloat(), (0.5 + r * sin(t)).toFloat())
         }
     }
@@ -265,9 +263,8 @@ private fun ExpressiveBack(width: Dp) {
                 .border(1.5.dp, VerdeEscuro.copy(alpha = 0.35f), innerShape),
         )
         Box(Modifier.size(width * 0.7f), contentAlignment = Alignment.Center) {
-            ShapeCanvas(BadgeShape.COOKIE, VerdeEscuro, Modifier.fillMaxSize())
-            val spade = (width * 0.3f).asSp()
-            Text(Suit.SPADES.symbol, style = TextStyle(color = Menta, fontSize = spade, lineHeight = spade))
+            CookieShape(VerdeEscuro, Modifier.fillMaxSize())
+            SuitShape(Suit.SPADES, Menta, Modifier.size(width * 0.3f))
         }
     }
 }
