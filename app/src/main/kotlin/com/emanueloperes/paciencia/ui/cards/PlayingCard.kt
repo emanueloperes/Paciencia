@@ -2,6 +2,8 @@ package com.emanueloperes.paciencia.ui.cards
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
@@ -30,11 +32,19 @@ import com.emanueloperes.paciencia.ui.theme.PacienciaTheme
 
 const val CARD_ASPECT_RATIO = 0.7f
 
+fun cardShape(width: Dp) = RoundedCornerShape(width * 0.1f)
+
 /** Carta desenhada pelo app: só valor e naipe, sem figuras. O tamanho segue a largura. */
 @Composable
-fun PlayingCard(card: Card, width: Dp, modifier: Modifier = Modifier) {
+fun PlayingCard(
+    card: Card,
+    width: Dp,
+    modifier: Modifier = Modifier,
+    highlighted: Boolean = false,
+    onClick: (() -> Unit)? = null,
+) {
     val colors = LocalTableColors.current
-    val shape = RoundedCornerShape(width * 0.1f)
+    val shape = cardShape(width)
     Box(
         modifier
             .width(width)
@@ -42,6 +52,8 @@ fun PlayingCard(card: Card, width: Dp, modifier: Modifier = Modifier) {
             .shadow(1.dp, shape)
             .clip(shape)
             .background(if (card.faceUp) colors.cardFace else colors.cardBack)
+            .then(if (highlighted) Modifier.border(2.dp, colors.highlight, shape) else Modifier)
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
             .semantics { contentDescription = if (card.faceUp) card.spokenName() else "Carta virada para baixo" },
     ) {
         if (card.faceUp) CardFace(card, width) else CardBack()

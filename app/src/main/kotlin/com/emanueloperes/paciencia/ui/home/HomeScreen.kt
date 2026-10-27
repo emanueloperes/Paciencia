@@ -30,7 +30,12 @@ import com.emanueloperes.paciencia.ui.theme.LocalTableColors
 import com.emanueloperes.paciencia.ui.theme.PacienciaTheme
 
 @Composable
-fun HomeScreen(onNewGame: (Difficulty) -> Unit, modifier: Modifier = Modifier) {
+fun HomeScreen(
+    savedGame: Difficulty?,
+    onContinue: () -> Unit,
+    onNewGame: (Difficulty) -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val colors = LocalTableColors.current
     Column(
         modifier
@@ -47,6 +52,21 @@ fun HomeScreen(onNewGame: (Difficulty) -> Unit, modifier: Modifier = Modifier) {
         Text("Spider", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onBackground)
         Spacer(Modifier.height(40.dp))
         Column(Modifier.widthIn(max = 320.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            if (savedGame != null) {
+                Button(
+                    onClick = onContinue,
+                    colors = ButtonDefaults.buttonColors(containerColor = colors.highlight, contentColor = colors.bar),
+                    modifier = Modifier.fillMaxWidth().height(64.dp),
+                ) {
+                    Text("Continuar · ${savedGame.label}", style = MaterialTheme.typography.titleMedium)
+                }
+                Text(
+                    "Novo jogo",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onBackground,
+                    modifier = Modifier.padding(top = 12.dp),
+                )
+            }
             for (difficulty in Difficulty.entries) {
                 Button(
                     onClick = { onNewGame(difficulty) },
@@ -81,5 +101,5 @@ private fun CardFan() {
 @Preview(widthDp = 360, heightDp = 720)
 @Composable
 private fun HomeScreenPreview() {
-    PacienciaTheme { HomeScreen(onNewGame = {}) }
+    PacienciaTheme { HomeScreen(savedGame = Difficulty.TWO_SUITS, onContinue = {}, onNewGame = {}) }
 }
