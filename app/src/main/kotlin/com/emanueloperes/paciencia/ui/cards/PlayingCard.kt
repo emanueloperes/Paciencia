@@ -18,7 +18,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
@@ -177,14 +176,6 @@ private val SuitPathData = mapOf(
 
 private val SuitPaths: Map<Suit, Path> = SuitPathData.mapValues { PathParser().parsePathString(it.value).toPath() }
 
-/** Ponto "cheio" de cada naipe (na caixa 100×100) onde fica a letra das figuras. */
-private val SuitCenter = mapOf(
-    Suit.HEARTS to Offset(42f, 40f),
-    Suit.DIAMONDS to Offset(44f, 50f),
-    Suit.SPADES to Offset(43f, 58f),
-    Suit.CLUBS to Offset(42f, 54f),
-)
-
 @Composable
 private fun SuitShape(suit: Suit, color: Color, modifier: Modifier) {
     val path = SuitPaths.getValue(suit)
@@ -198,22 +189,14 @@ private fun SuitShape(suit: Suit, color: Color, modifier: Modifier) {
 @Composable
 private fun ExpressiveFace(card: Card, width: Dp) {
     val ink = if (card.suit.isRed) VermelhoSuave else VerdeEscuro
-    val face = if (card.suit.isRed) FaceRosa else FaceMenta
     val value = (width * 0.44f).asSp()
     Box(Modifier.fillMaxSize()) {
         // Naipe gigante com uma largura de carta, vazando pelo canto inferior direito.
-        Box(Modifier.offset(x = width * 0.28f, y = width * 0.66f).size(width)) {
-            SuitShape(card.suit, ink.copy(alpha = 0.94f), Modifier.fillMaxSize())
-            if (card.rank > 10) {
-                val center = SuitCenter.getValue(card.suit)
-                val letter = (width * 0.36f).asSp()
-                Text(
-                    card.rankLabel(),
-                    style = TextStyle(color = face, fontSize = letter, lineHeight = letter, fontWeight = FontWeight.Black),
-                    modifier = Modifier.align(BiasAlignment(center.x / 50f - 1f, center.y / 50f - 1f)),
-                )
-            }
-        }
+        SuitShape(
+            card.suit,
+            ink.copy(alpha = 0.94f),
+            Modifier.offset(x = width * 0.28f, y = width * 0.66f).size(width),
+        )
         Text(
             card.rankLabel(),
             style = TextStyle(
