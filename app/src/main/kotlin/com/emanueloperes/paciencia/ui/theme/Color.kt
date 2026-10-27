@@ -13,3 +13,7 @@ val CinzaEsverdeado = Color(0xFF374542)
 val BrancoEsverdeado = Color(0xFFF3FBF5)
 val VermelhoSuave = Color(0xFFC62F3B)
 val TextoSecundario = Color(0xFFC3D6CB)
+
+// Baralho expressivo: fundo tonal por cor de naipe.
+val FaceMenta = Color(0xFFE3F6EA)
+val FaceRosa = Color(0xFFFDE8E6)
