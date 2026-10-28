@@ -20,6 +20,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -27,6 +28,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.GraphicsLayerScope
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
@@ -46,21 +48,47 @@ import com.emanueloperes.paciencia.ui.cards.CARD_ASPECT_RATIO
 import com.emanueloperes.paciencia.ui.cards.PlayingCard
 import com.emanueloperes.paciencia.ui.cards.cardShape
 import com.emanueloperes.paciencia.ui.theme.LocalTableColors
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.cos
+import kotlin.math.sin
 import kotlin.math.roundToInt
 
 private val Gap = 3.dp
 
 // Curvas fixas e curtas: a carta chega rápido e desacelera no fim, sem passar do lugar.
-private val MoveSpec = tween<Dp>(durationMillis = 180, easing = FastOutSlowInEasing)
-private val FlipSpec = tween<Float>(durationMillis = 160, easing = FastOutSlowInEasing)
+private const val MOVE_MILLIS = 180
+private val MoveSpec = tween<Dp>(durationMillis = MOVE_MILLIS, easing = FastOutSlowInEasing)
+private val FlipSpec = tween<Float>(durationMillis = 180, easing = FastOutSlowInEasing)
 private val LiftSpec = tween<Float>(durationMillis = 120, easing = FastOutSlowInEasing)
 private val HopSpec = tween<Float>(durationMillis = 170, easing = FastOutSlowInEasing)
 
 /** Uma carta da mesa com a posição que ela deve ocupar. */
 private data class PlacedCard(val card: Card, val column: Int, val index: Int, val position: DpOffset, val isTop: Boolean)
+
+/**
+ * Carta que acabou de sair da mesa e ainda voa até o destino: o monte (ao desfazer uma
+ * distribuição) ou a pilha de completas (ao fechar uma sequência).
+ */
+private data class Ghost(
+    val serial: Int,
+    val card: Card,
+    val from: DpOffset,
+    val to: DpOffset,
+    val delayMillis: Int,
+    val toStock: Boolean,
+)
+
+/** Memória da mesa entre composições, para descobrir quais cartas saíram e de onde. */
+private class TableMemory {
+    var lastState: GameState? = null
+    var positions: Map<Int, PlacedCard> = emptyMap()
+    val ghosts = mutableListOf<Ghost>()
+    var serial = 0
+}
 
 /** Cartas sendo arrastadas: a partir de [index] na coluna [from], deslocadas [offset] pixels. */
 private data class DragState(val from: Int, val index: Int, val offset: Offset)
@@ -80,6 +108,9 @@ fun Table(
     modifier: Modifier = Modifier,
 ) {
     var drag by remember { mutableStateOf<DragState?>(null) }
+    val memory = remember { TableMemory() }
+    // Muda quando um fantasma termina, para a mesa se recompor sem ele.
+    var ghostTick by remember { mutableIntStateOf(0) }
     val density = LocalDensity.current
     val haptics = LocalHapticFeedback.current
     BoxWithConstraints(modifier.fillMaxSize().padding(horizontal = 2.dp, vertical = 8.dp)) {
@@ -113,6 +144,55 @@ fun Table(
             }
         }
 
+        fun foundationPosition(count: Int) = DpOffset(columnX(0) + cardWidth * 0.3f * (count - 1).coerceAtLeast(0), 0.dp)
+
+        val placed = buildList {
+            for (column in 0 until columns) {
+                val cards = state.tableau[column]
+                val offsets = columnOffsets(cards, cardHeight, maxHeight - tableauTop)
+                cards.forEachIndexed { index, card ->
+                    val position = DpOffset(columnX(column), tableauTop + offsets[index])
+                    add(PlacedCard(card, column, index, position, isTop = index == cards.lastIndex))
+                }
+            }
+        }
+
+        // Compara com a jogada anterior para animar as cartas que saíram da mesa.
+        val previous = memory.lastState
+        if (previous !== state) {
+            // Só uma jogada de diferença (jogar ou desfazer); nova partida não anima saídas.
+            val oneStep = previous != null && previous.seed == state.seed && abs(previous.moves - state.moves) == 1
+            if (oneStep) {
+                val ids = placed.mapTo(HashSet()) { it.card.id }
+                val gone = memory.positions.values.filter { it.card.id !in ids }
+                if (state.stock.size > previous!!.stock.size) {
+                    // Desfazer distribuição: da direita para a esquerda, cada carta vira e volta ao monte.
+                    gone.sortedByDescending { it.column }.forEachIndexed { k, p ->
+                        memory.ghosts += Ghost(memory.serial++, p.card, p.position, stockPosition, k * 45, toStock = true)
+                    }
+                } else if (gone.isNotEmpty()) {
+                    // Sequência completa: as 13 cartas sobem juntas, em leque, para a pilha de completas.
+                    val run = gone.sortedBy { it.index }
+                    run.forEachIndexed { k, p ->
+                        memory.ghosts += Ghost(
+                            memory.serial++, p.card, p.position, foundationPosition(state.completed.size),
+                            (run.size - 1 - k) * 15, toStock = false,
+                        )
+                    }
+                }
+            }
+            memory.lastState = state
+            memory.positions = placed.associateBy { it.card.id }
+        }
+        // Cartas que voltam de uma sequência desfeita saem da pilha de completas.
+        val enterFrom = if (previous != null && state.completed.size < previous.completed.size) {
+            foundationPosition(previous.completed.size)
+        } else {
+            stockPosition
+        }
+        ghostTick.let { } // Lê o contador para recompor quando um fantasma termina.
+        val returningToStock = memory.ghosts.any { it.toStock }
+
         // Conjuntos completos: um Rei de cada, sobrepostos; o mais novo entra com um salto.
         state.completed.forEachIndexed { i, suit ->
             key("completed-$i") {
@@ -129,16 +209,18 @@ fun Table(
             }
         }
 
-        // Monte: um verso por distribuição restante, abrindo para a esquerda.
-        if (state.dealsLeft == 0) {
+        // Monte: um verso por distribuição restante, abrindo para a esquerda. Enquanto cartas
+        // voltam de uma distribuição desfeita, o verso devolvido só aparece quando elas chegam.
+        val deals = state.dealsLeft - if (returningToStock) 1 else 0
+        if (deals == 0) {
             EmptySlot(cardWidth, stockPosition, highlighted = false)
         }
-        repeat(state.dealsLeft) { i ->
-            val isTop = i == state.dealsLeft - 1
+        repeat(deals) { i ->
+            val isTop = i == deals - 1
             PlayingCard(
                 state.stock[0].copy(faceUp = false),
                 cardWidth,
-                Modifier.offset(x = stockPosition.x - cardWidth * 0.2f * (state.dealsLeft - 1 - i)),
+                Modifier.offset(x = stockPosition.x - cardWidth * 0.2f * (deals - 1 - i)),
                 glowing = isTop && hint == Move.Deal,
                 onClick = if (isTop) onStockTap else null,
             )
@@ -149,13 +231,11 @@ fun Table(
             EmptySlot(cardWidth, DpOffset(columnX(column), tableauTop), highlightSlot)
         }
 
-        val placed = buildList {
-            for (column in 0 until columns) {
-                val cards = state.tableau[column]
-                val offsets = columnOffsets(cards, cardHeight, maxHeight - tableauTop)
-                cards.forEachIndexed { index, card ->
-                    val position = DpOffset(columnX(column), tableauTop + offsets[index])
-                    add(PlacedCard(card, column, index, position, isTop = index == cards.lastIndex))
+        for (ghost in memory.ghosts.toList()) {
+            key("ghost-${ghost.serial}") {
+                GhostCard(ghost, cardWidth) {
+                    memory.ghosts.remove(ghost)
+                    ghostTick++
                 }
             }
         }
@@ -169,7 +249,7 @@ fun Table(
                     card = p.card,
                     width = cardWidth,
                     target = p.position,
-                    enterFrom = stockPosition,
+                    enterFrom = enterFrom,
                     // Na mesa inicial as cartas chegam em leque; ao distribuir, uma coluna por vez.
                     enterDelayMillis = p.column * 30 + if (state.moves == 0) p.index * 60 else 0,
                     z = p.index,
@@ -260,8 +340,13 @@ private fun AnimatedCard(
         launch { x.animateTo(target.x, MoveSpec) }
         launch { y.animateTo(target.y, MoveSpec) }
     }
+    var landed by remember { mutableStateOf(false) }
     LaunchedEffect(card.faceUp, entered) {
-        if (entered) flip.animateTo(if (card.faceUp) 0f else 180f, FlipSpec)
+        if (!entered) return@LaunchedEffect
+        // Saindo do monte, a carta voa de costas e só vira depois de pousar.
+        if (!landed) delay(MOVE_MILLIS.toLong())
+        landed = true
+        flip.animateTo(if (card.faceUp) 0f else 180f, FlipSpec)
     }
 
     // Dica: as cartas dão três pulinhos e crescem um pouco a cada um.
@@ -313,9 +398,7 @@ private fun AnimatedCard(
                 scaleX = lift * (1f + 0.06f * hop.value)
                 scaleY = lift * (1f + 0.06f * hop.value)
                 translationY = -hop.value * (width * 0.2f).toPx()
-                // Entre 90° e 180° o verso aparece espelhado; o padrão é simétrico, então não importa.
-                rotationY = flip.value
-                cameraDistance = 12f * density
+                applyFlip(flip.value)
             }
             .pointerInput(Unit) {
                 detectDragGestures(
@@ -327,6 +410,47 @@ private fun AnimatedCard(
                     onDragEnd = { currentOnDragEnd() },
                     onDragCancel = { currentOnDragCancel() },
                 )
+            },
+    )
+}
+
+/**
+ * Giro plano e simétrico: a carta fecha pelo meio (escala horizontal), troca de lado e abre,
+ * crescendo um pouco na vertical. Sem perspectiva, nenhum lado fica maior que o outro.
+ * [flip] vai de 0 (frente) a 180 (verso).
+ */
+private fun GraphicsLayerScope.applyFlip(flip: Float) {
+    val radians = flip / 180f * PI.toFloat()
+    scaleX *= abs(cos(radians))
+    scaleY *= 1f + 0.06f * sin(radians)
+}
+
+@Composable
+private fun GhostCard(ghost: Ghost, width: Dp, onDone: () -> Unit) {
+    val x = remember { Animatable(ghost.from.x, Dp.VectorConverter) }
+    val y = remember { Animatable(ghost.from.y, Dp.VectorConverter) }
+    val flip = remember { Animatable(if (ghost.card.faceUp) 0f else 180f) }
+    val currentOnDone by rememberUpdatedState(onDone)
+    LaunchedEffect(Unit) {
+        delay(ghost.delayMillis.toLong())
+        // Voltando ao monte, primeiro vira no lugar e só então voa.
+        if (ghost.toStock) flip.animateTo(180f, FlipSpec)
+        coroutineScope {
+            launch { x.animateTo(ghost.to.x, MoveSpec) }
+            launch { y.animateTo(ghost.to.y, MoveSpec) }
+        }
+        currentOnDone()
+    }
+    PlayingCard(
+        card = ghost.card.copy(faceUp = flip.value < 90f),
+        width = width,
+        modifier = Modifier
+            .offset { IntOffset(x.value.roundToPx(), y.value.roundToPx()) }
+            .zIndex(3000f + ghost.serial % 1000)
+            .graphicsLayer {
+                scaleX = 1f
+                scaleY = 1f
+                applyFlip(flip.value)
             },
     )
 }

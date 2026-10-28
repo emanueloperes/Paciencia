@@ -210,13 +210,13 @@ private fun SuitShape(suit: Suit, color: Color, modifier: Modifier, solidBase: B
 @Composable
 private fun ExpressiveFace(card: Card, width: Dp) {
     val ink = if (card.suit.isRed) VermelhoSuave else VerdeEscuro
-    val value = (width * 0.44f).asSp()
+    val value = (width * 0.56f).asSp()
     Box(Modifier.fillMaxSize()) {
         // Naipe gigante com uma largura de carta, vazando pelo canto inferior direito.
         SuitShape(
             card.suit,
             ink,
-            Modifier.offset(x = width * 0.28f, y = width * 0.66f).size(width),
+            Modifier.offset(x = width * 0.3f, y = width * 0.7f).size(width),
             solidBase = true,
         )
         Text(
@@ -226,11 +226,12 @@ private fun ExpressiveFace(card: Card, width: Dp) {
                 fontSize = value,
                 lineHeight = value,
                 fontWeight = FontWeight.Black,
-                letterSpacing = (-0.04).em,
+                letterSpacing = (-0.06).em,
             ),
-            modifier = Modifier.padding(start = width * 0.08f, top = width * 0.03f),
+            // Valor grande: é o que aparece da carta quando ela está sobreposta na coluna.
+            modifier = Modifier.padding(start = width * 0.06f),
         )
-        SuitShape(card.suit, ink, Modifier.offset(x = width * 0.09f, y = width * 0.49f).size(width * 0.24f))
+        SuitShape(card.suit, ink, Modifier.offset(x = width * 0.09f, y = width * 0.62f).size(width * 0.22f))
     }
 }
 
