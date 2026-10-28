@@ -22,3 +22,11 @@ dependencies {
 tasks.test {
     useJUnitPlatform()
 }
+
+// Gera a lista de partidas com solução (SolvableSeeds.kt). Demora alguns minutos.
+tasks.register<JavaExec>("generateSolvableSeeds") {
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("com.emanueloperes.paciencia.engine.GenerateSolvableSeedsKt")
+    jvmArgs("-Xss256m", "-Xmx4g")
+    args(file("src/main/kotlin/com/emanueloperes/paciencia/engine/SolvableSeeds.kt").path)
+}

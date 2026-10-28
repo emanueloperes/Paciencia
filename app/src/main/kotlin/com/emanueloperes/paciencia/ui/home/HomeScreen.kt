@@ -1,9 +1,11 @@
 package com.emanueloperes.paciencia.ui.home
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -15,11 +17,13 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.emanueloperes.paciencia.BuildConfig
@@ -36,6 +40,8 @@ fun HomeScreen(
     onContinue: () -> Unit,
     onNewGame: (Difficulty) -> Unit,
     modifier: Modifier = Modifier,
+    solvableOnly: Boolean = true,
+    onSolvableOnlyChange: (Boolean) -> Unit = {},
 ) {
     val colors = LocalTableColors.current
     Column(
@@ -76,6 +82,23 @@ fun HomeScreen(
                 ) {
                     Text(difficulty.label, style = MaterialTheme.typography.titleMedium)
                 }
+            }
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .toggleable(value = solvableOnly, role = Role.Switch, onValueChange = onSolvableOnlyChange)
+                    .padding(vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("Só partidas com solução", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onBackground)
+                    Text(
+                        "Sorteia entre partidas já resolvidas pelo app",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
+                    )
+                }
+                Switch(checked = solvableOnly, onCheckedChange = null)
             }
         }
         Spacer(Modifier.height(24.dp))

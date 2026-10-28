@@ -21,16 +21,18 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
-        val store = (application as PacienciaApp).gameStore
+        val app = application as PacienciaApp
         setContent {
             PacienciaTheme {
-                val game: GameViewModel = viewModel(factory = GameViewModel.factory(store))
+                val game: GameViewModel = viewModel(factory = GameViewModel.factory(app.gameStore, app.settings))
                 val state by game.state.collectAsStateWithLifecycle()
                 var screen by rememberSaveable { mutableStateOf(Screen.HOME) }
                 when (screen) {
                     Screen.HOME -> HomeScreen(
                         savedGame = state.session?.state?.difficulty?.takeIf { state.canContinue },
                         onContinue = { screen = Screen.GAME },
+                        solvableOnly = state.solvableOnly,
+                        onSolvableOnlyChange = game::setSolvableOnly,
                         onNewGame = { difficulty ->
                             game.newGame(difficulty)
                             screen = Screen.GAME

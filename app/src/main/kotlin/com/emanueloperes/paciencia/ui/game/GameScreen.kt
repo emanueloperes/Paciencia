@@ -45,6 +45,7 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.emanueloperes.paciencia.engine.Difficulty
 import com.emanueloperes.paciencia.engine.GameSession
+import com.emanueloperes.paciencia.engine.SolvableSeeds
 import com.emanueloperes.paciencia.ui.home.label
 import com.emanueloperes.paciencia.ui.theme.LocalTableColors
 import com.emanueloperes.paciencia.ui.theme.TabularNumbers
@@ -153,7 +154,10 @@ private fun TopBar(
                 Icon(Icons.Filled.MoreVert, contentDescription = "Mais opções")
                 DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                     DropdownMenuItem(
-                        text = { Text("Partida nº ${session.state.seed} · ${session.state.difficulty.label}") },
+                        text = {
+                            val solvable = SolvableSeeds.forDifficulty(session.state.difficulty).binarySearch(session.state.seed.toInt()) >= 0
+                            Text("Partida nº ${session.state.seed} · ${session.state.difficulty.label}" + if (solvable) " · com solução" else "")
+                        },
                         onClick = {},
                         enabled = false,
                     )

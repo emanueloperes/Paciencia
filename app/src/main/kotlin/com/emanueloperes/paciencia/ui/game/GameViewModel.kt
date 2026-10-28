@@ -5,12 +5,14 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.emanueloperes.paciencia.data.GameStore
+import com.emanueloperes.paciencia.data.Settings
 import com.emanueloperes.paciencia.data.StoredGame
 import com.emanueloperes.paciencia.engine.Difficulty
 import com.emanueloperes.paciencia.engine.GameSession
 import com.emanueloperes.paciencia.engine.Hints
 import com.emanueloperes.paciencia.engine.Move
 import com.emanueloperes.paciencia.engine.Rules
+import com.emanueloperes.paciencia.engine.SolvableSeeds
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -36,12 +38,13 @@ data class GameUiState(
     /** Dica em destaque na mesa, até a próxima jogada. */
     val hint: Move? = null,
     val message: String? = null,
+    val solvableOnly: Boolean = true,
 ) {
     val canContinue: Boolean get() = session != null && !session.state.isWon
 }
 
-class GameViewModel(private val store: GameStore) : ViewModel() {
-    private val _state = MutableStateFlow(GameUiState())
+class GameViewModel(private val store: GameStore, private val settings: Settings) : ViewModel() {
+    private val _state = MutableStateFlow(GameUiState(solvableOnly = settings.solvableOnly))
     val state: StateFlow<GameUiState> = _state.asStateFlow()
 
     private val session: GameSession? get() = _state.value.session
@@ -80,13 +83,30 @@ class GameViewModel(private val store: GameStore) : ViewModel() {
         }
     }
 
-    fun newGame(difficulty: Difficulty, seed: Long = Random.nextLong(1, 1_000_000)) {
+    fun newGame(difficulty: Difficulty) {
+        val solvable = SolvableSeeds.forDifficulty(difficulty)
+        val previous = session?.state?.seed
+        val seed = if (_state.value.solvableOnly && solvable.isNotEmpty()) {
+            // Evita repetir a partida que acabou de ser jogada.
+            solvable.filter { it.toLong() != previous }.ifEmpty { solvable.toList() }.random().toLong()
+        } else {
+            Random.nextLong(1, 1_000_000)
+        }
+        startGame(difficulty, seed)
+    }
+
+    fun setSolvableOnly(enabled: Boolean) {
+        settings.solvableOnly = enabled
+        _state.update { it.copy(solvableOnly = enabled) }
+    }
+
+    private fun startGame(difficulty: Difficulty, seed: Long) {
         replaceSession(GameSession.start(seed, difficulty))
     }
 
     fun restart() {
         val current = session ?: return
-        newGame(current.state.difficulty, current.state.seed)
+        startGame(current.state.difficulty, current.state.seed)
     }
 
     /** Toque numa carta: move para o melhor destino, se houver. */
@@ -209,8 +229,8 @@ class GameViewModel(private val store: GameStore) : ViewModel() {
     }
 
     companion object {
-        fun factory(store: GameStore) = viewModelFactory {
-            initializer { GameViewModel(store) }
+        fun factory(store: GameStore, settings: Settings) = viewModelFactory {
+            initializer { GameViewModel(store, settings) }
         }
     }
 }
