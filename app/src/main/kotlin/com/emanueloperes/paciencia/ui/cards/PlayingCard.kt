@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import com.emanueloperes.paciencia.engine.Card
 import com.emanueloperes.paciencia.engine.Suit
+import com.emanueloperes.paciencia.ui.theme.BordaCarta
 import com.emanueloperes.paciencia.ui.theme.FaceMenta
 import com.emanueloperes.paciencia.ui.theme.FaceRosa
 import com.emanueloperes.paciencia.ui.theme.LocalTableColors
@@ -75,7 +76,7 @@ fun PlayingCard(
     dimmed: Boolean = false,
     /** Carta indicada pela dica: borda mais grossa e brilho menta. */
     glowing: Boolean = false,
-    elevation: Dp = 1.dp,
+    elevation: Dp = 0.5.dp,
     onClick: (() -> Unit)? = null,
 ) {
     val colors = LocalTableColors.current
@@ -90,8 +91,8 @@ fun PlayingCard(
     val outline = when {
         glowing -> Modifier.border(3.dp, colors.highlight, shape)
         highlighted -> Modifier.border(2.dp, colors.highlight, shape)
-        // Contorno separa os versos empilhados na coluna.
-        !card.faceUp && style == DeckStyle.EXPRESSIVE -> Modifier.border(1.5.dp, VerdeEscuro.copy(alpha = 0.6f), shape)
+        // Borda fina mais escura que a mesa: separa as cartas empilhadas sem depender da sombra.
+        style == DeckStyle.EXPRESSIVE -> Modifier.border(1.dp, BordaCarta, shape)
         !card.faceUp -> Modifier.border(0.75.dp, colors.cardBackPattern.copy(alpha = 0.5f), shape)
         else -> Modifier
     }
@@ -124,15 +125,15 @@ fun PlayingCard(
 }
 
 /**
- * Sombra que sobe a partir da borda de cima, sobre a carta de baixo na coluna.
+ * Sombra curta e suave que sobe a partir da borda de cima, sobre a carta de baixo na coluna.
  * A sombra comum do Material quase não aparece nesse sentido.
  */
 private fun Modifier.upwardShadow(width: Dp) = drawBehind {
-    val height = (width * 0.07f).toPx()
+    val height = (width * 0.035f).toPx()
     val inset = (width * 0.08f).toPx()
     drawRect(
         brush = Brush.verticalGradient(
-            listOf(Color.Transparent, Color(0x73001410)),
+            listOf(Color.Transparent, Color(0x33001410)),
             startY = -height,
             endY = 0f,
         ),

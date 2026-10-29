@@ -17,3 +17,6 @@ val TextoSecundario = Color(0xFFC3D6CB)
 // Baralho expressivo: fundo tonal por cor de naipe.
 val FaceMenta = Color(0xFFE3F6EA)
 val FaceRosa = Color(0xFFFDE8E6)
+
+// Borda das cartas: um verde quase preto, mais escuro que a mesa.
+val BordaCarta = Color(0xFF00170A)

@@ -424,7 +424,7 @@ private fun AnimatedCard(
 
     // Ao pegar, a carta "levanta": cresce um pouco e ganha sombra.
     val lift by animateFloatAsState(if (dragging) 1.08f else 1f, LiftSpec, label = "lift")
-    val elevation by animateDpAsState(if (dragging) 10.dp else 1.dp, tween(120, easing = FastOutSlowInEasing), label = "elevation")
+    val elevation by animateDpAsState(if (dragging) 10.dp else 0.5.dp, tween(120, easing = FastOutSlowInEasing), label = "elevation")
 
     val currentOnDragStart by rememberUpdatedState(onDragStart)
     val currentOnDrag by rememberUpdatedState(onDrag)
