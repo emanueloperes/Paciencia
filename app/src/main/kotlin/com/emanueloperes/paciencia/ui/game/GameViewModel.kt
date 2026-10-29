@@ -13,6 +13,8 @@ import com.emanueloperes.paciencia.engine.Hints
 import com.emanueloperes.paciencia.engine.Move
 import com.emanueloperes.paciencia.engine.Rules
 import com.emanueloperes.paciencia.engine.SolvableSeeds
+import com.emanueloperes.paciencia.engine.Solver
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -24,6 +26,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.random.Random
 import kotlin.time.TimeMark
 import kotlin.time.TimeSource
@@ -39,6 +42,10 @@ data class GameUiState(
     val hint: Move? = null,
     val message: String? = null,
     val solvableOnly: Boolean = true,
+    /** Jogadas que terminam a partida, quando só falta agrupar as cartas; habilita "Completar". */
+    val autoComplete: List<Move>? = null,
+    /** O app está jogando sozinho o final da partida: toques e botões ficam parados. */
+    val autoPlaying: Boolean = false,
 ) {
     val canContinue: Boolean get() = session != null && !session.state.isWon
 }
@@ -56,6 +63,7 @@ class GameViewModel(private val store: GameStore, private val settings: Settings
     private var ticker: Job? = null
 
     private var hintIndex = 0
+    private var autoCompleteJob: Job? = null
 
     private val _events = MutableSharedFlow<GameEvent>(extraBufferCapacity = 8)
     val events: SharedFlow<GameEvent> = _events.asSharedFlow()
@@ -71,6 +79,7 @@ class GameViewModel(private val store: GameStore, private val settings: Settings
             if (restored != null && session == null) {
                 elapsedBefore = stored.elapsedMillis
                 _state.update { it.copy(session = restored) }
+                checkAutoComplete()
             }
             _state.update { it.copy(loaded = true) }
             updateClock()
@@ -111,6 +120,7 @@ class GameViewModel(private val store: GameStore, private val settings: Settings
 
     /** Toque numa carta: move para o melhor destino, se houver. */
     fun tap(column: Int, index: Int) {
+        if (_state.value.autoPlaying) return
         val current = session ?: return
         val target = Hints.bestTarget(current.state, column, index)
         if (target == null) {
@@ -122,32 +132,49 @@ class GameViewModel(private val store: GameStore, private val settings: Settings
 
     /** Soltar cartas arrastadas sobre uma coluna; movimento ilegal é ignorado. */
     fun drop(from: Int, index: Int, to: Int) {
+        if (_state.value.autoPlaying) return
         val current = session ?: return
         val move = Move.Transfer(from, index, to)
         if (Rules.isLegal(current.state, move)) play(move) else _events.tryEmit(GameEvent.INVALID)
     }
 
     fun deal() {
+        if (_state.value.autoPlaying) return
         val current = session ?: return
-        if (Rules.canDeal(current.state)) {
-            play(Move.Deal)
-        } else if (current.state.stock.isNotEmpty()) {
-            _events.tryEmit(GameEvent.INVALID)
-            showMessage("Preencha as colunas vazias antes de distribuir")
-        }
+        if (Rules.canDeal(current.state)) play(Move.Deal) else _events.tryEmit(GameEvent.INVALID)
     }
 
     fun undo() {
+        if (_state.value.autoPlaying) return
         val current = session ?: return
         if (!current.canUndo) return
         hintIndex = 0
         _state.update { it.copy(session = current.undo(), hint = null) }
         _events.tryEmit(GameEvent.UNDONE)
+        checkAutoComplete()
         requestSave()
+    }
+
+    /** Joga sozinho o final da partida, uma jogada por vez, com as animações normais. */
+    fun autoComplete() {
+        val moves = _state.value.autoComplete ?: return
+        _state.update { it.copy(autoComplete = null, autoPlaying = true, hint = null) }
+        viewModelScope.launch {
+            for (move in moves) {
+                val current = session ?: break
+                if (!Rules.isLegal(current.state, move)) break
+                play(move)
+                // Dá tempo de a carta pousar; fechar uma sequência anima por mais tempo.
+                delay(if (session?.state?.completed?.size != current.state.completed.size) 650 else 260)
+            }
+            _state.update { it.copy(autoPlaying = false) }
+            checkAutoComplete()
+        }
     }
 
     /** Mostra a próxima dica; tocar de novo passa para a seguinte. */
     fun hint() {
+        if (_state.value.autoPlaying) return
         val current = session ?: return
         val suggestions = Hints.suggestions(current.state)
         if (suggestions.isEmpty()) {
@@ -184,7 +211,28 @@ class GameViewModel(private val store: GameStore, private val settings: Settings
             },
         )
         updateClock()
+        checkAutoComplete()
         requestSave()
+    }
+
+    /**
+     * Com o monte vazio e todas as cartas à mostra, procura em segundo plano uma solução para
+     * o resto; se achar, aparece o botão "Completar". Qualquer jogada refaz a busca.
+     */
+    private fun checkAutoComplete() {
+        autoCompleteJob?.cancel()
+        if (_state.value.autoPlaying) return
+        val position = session?.state
+        val endgame = position != null && !position.isWon && position.stock.isEmpty() &&
+            position.tableau.all { column -> column.all { it.faceUp } }
+        if (!endgame) {
+            _state.update { it.copy(autoComplete = null) }
+            return
+        }
+        autoCompleteJob = viewModelScope.launch {
+            val solution = withContext(Dispatchers.Default) { Solver.solve(position!!, 20_000, 5).solution }
+            if (session?.state === position) _state.update { it.copy(autoComplete = solution) }
+        }
     }
 
     private fun replaceSession(newSession: GameSession) {
@@ -194,6 +242,7 @@ class GameViewModel(private val store: GameStore, private val settings: Settings
         hintIndex = 0
         _state.update { it.copy(session = newSession, hint = null, elapsedSeconds = 0) }
         updateClock()
+        checkAutoComplete()
         requestSave()
     }
 

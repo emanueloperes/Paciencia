@@ -40,8 +40,8 @@ object Rules {
         return target.isEmpty() || target.last().rank == card.rank + 1
     }
 
-    fun canDeal(state: GameState): Boolean =
-        state.stock.isNotEmpty() && state.tableau.none { it.isEmpty() }
+    /** Distribuir é sempre permitido enquanto houver monte; colunas vazias também recebem carta. */
+    fun canDeal(state: GameState): Boolean = state.stock.isNotEmpty()
 
     fun isLegal(state: GameState, move: Move): Boolean = when (move) {
         Move.Deal -> canDeal(state)

@@ -16,6 +16,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -48,6 +50,7 @@ import com.emanueloperes.paciencia.ui.cards.CARD_ASPECT_RATIO
 import com.emanueloperes.paciencia.ui.cards.PlayingCard
 import com.emanueloperes.paciencia.ui.cards.cardShape
 import com.emanueloperes.paciencia.ui.theme.LocalTableColors
+import com.emanueloperes.paciencia.ui.theme.TabularNumbers
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -70,8 +73,11 @@ private val HopSpec = tween<Float>(durationMillis = 170, easing = FastOutSlowInE
 private data class PlacedCard(val card: Card, val column: Int, val index: Int, val position: DpOffset, val isTop: Boolean)
 
 /**
- * Carta que acabou de sair da mesa e ainda voa até o destino: o monte (ao desfazer uma
- * distribuição) ou a pilha de completas (ao fechar uma sequência).
+ * Carta que acabou de sair da mesa e ainda está a caminho do destino: o monte (ao desfazer
+ * uma distribuição) ou a pilha de sequências completas.
+ *
+ * Ao fechar uma sequência o caminho tem três trechos: a carta pousa na coluna ([landing]),
+ * as 13 se juntam sobre o Rei ([gather]) e o bloco voa para a pilha ([to]).
  */
 private data class Ghost(
     val serial: Int,
@@ -80,6 +86,10 @@ private data class Ghost(
     val to: DpOffset,
     val delayMillis: Int,
     val toStock: Boolean,
+    val landing: DpOffset? = null,
+    val gather: DpOffset? = null,
+    /** Posição na pilha de completas que esta carta vai ocupar; -1 se volta ao monte. */
+    val foundationIndex: Int = -1,
 )
 
 /** Memória da mesa entre composições, para descobrir quais cartas saíram e de onde. */
@@ -162,23 +172,56 @@ fun Table(
         if (previous !== state) {
             // Só uma jogada de diferença (jogar ou desfazer); nova partida não anima saídas.
             val oneStep = previous != null && previous.seed == state.seed && abs(previous.moves - state.moves) == 1
-            if (oneStep) {
+            if (oneStep && state.stock.size > previous!!.stock.size) {
+                // Desfazer distribuição: da direita para a esquerda, cada carta vira e volta ao monte.
                 val ids = placed.mapTo(HashSet()) { it.card.id }
                 val gone = memory.positions.values.filter { it.card.id !in ids }
-                if (state.stock.size > previous!!.stock.size) {
-                    // Desfazer distribuição: da direita para a esquerda, cada carta vira e volta ao monte.
-                    gone.sortedByDescending { it.column }.forEachIndexed { k, p ->
-                        memory.ghosts += Ghost(memory.serial++, p.card, p.position, stockPosition, k * 45, toStock = true)
+                gone.sortedByDescending { it.column }.forEachIndexed { k, p ->
+                    memory.ghosts += Ghost(memory.serial++, p.card, p.position, stockPosition, k * 45, toStock = true)
+                }
+            } else if (oneStep && state.moves > previous!!.moves && state.completed.size > previous.completed.size) {
+                // Sequência fechada: a mesa como ficou logo depois da jogada, antes de a sequência sair.
+                val ids = placed.mapTo(HashSet()) { it.card.id }
+                val dealt = previous.stock.size > state.stock.size
+                val gone = (previous.tableau.flatten() + if (dealt) previous.stock.take(columns) else emptyList())
+                    .filter { it.id !in ids }
+                    .mapTo(HashSet()) { it.id }
+                val virtual = if (dealt) {
+                    previous.tableau.mapIndexed { c, column -> column + previous.stock[c].faceUp() }
+                } else {
+                    val target = (0 until columns).first { c -> previous.tableau[c].any { it.id in gone && it.rank == Card.KING } }
+                    val from = (0 until columns).first { c -> c != target && previous.tableau[c].any { it.id in gone } }
+                    val moved = previous.tableau[from].filter { it.id in gone }
+                    previous.tableau.mapIndexed { c, column ->
+                        when (c) {
+                            target -> column + moved
+                            from -> column.filter { it.id !in gone }
+                            else -> column
+                        }
                     }
-                } else if (gone.isNotEmpty()) {
-                    // Sequência completa: as 13 cartas sobem juntas, em leque, para a pilha de completas.
-                    val run = gone.sortedBy { it.index }
-                    run.forEachIndexed { k, p ->
+                }
+                var foundationIndex = previous.completed.size
+                for (c in 0 until columns) {
+                    val column = virtual[c]
+                    val run = column.filter { it.id in gone }
+                    if (run.isEmpty()) continue
+                    val offsets = columnOffsets(column, cardHeight, maxHeight - tableauTop)
+                    val landings = run.map { card -> DpOffset(columnX(c), tableauTop + offsets[column.indexOf(card)]) }
+                    run.forEachIndexed { k, card ->
                         memory.ghosts += Ghost(
-                            memory.serial++, p.card, p.position, foundationPosition(state.completed.size),
-                            (run.size - 1 - k) * 15, toStock = false,
+                            serial = memory.serial++,
+                            card = card,
+                            from = memory.positions[card.id]?.position ?: stockPosition,
+                            to = foundationPosition(foundationIndex + 1),
+                            // No voo final o bloco sai em leque, de cima para baixo.
+                            delayMillis = (run.size - 1 - k) * 12,
+                            toStock = false,
+                            landing = landings[k],
+                            gather = landings.first(),
+                            foundationIndex = foundationIndex,
                         )
                     }
+                    foundationIndex++
                 }
             }
             memory.lastState = state
@@ -192,9 +235,12 @@ fun Table(
         }
         ghostTick.let { } // Lê o contador para recompor quando um fantasma termina.
         val returningToStock = memory.ghosts.any { it.toStock }
+        // Sequência ainda a caminho da pilha: o Rei dela só aparece quando o bloco chega.
+        val pendingSets = memory.ghosts.mapNotNullTo(HashSet()) { ghost -> ghost.foundationIndex.takeIf { it >= 0 } }
+        val shownCompleted = state.completed.filterIndexed { i, _ -> i !in pendingSets }
 
         // Conjuntos completos: um Rei de cada, sobrepostos; o mais novo entra com um salto.
-        state.completed.forEachIndexed { i, suit ->
+        shownCompleted.forEachIndexed { i, suit ->
             key("completed-$i") {
                 val scale = remember { Animatable(1.4f) }
                 LaunchedEffect(Unit) { scale.animateTo(1f, tween(220, easing = FastOutSlowInEasing)) }
@@ -207,6 +253,18 @@ fun Table(
                         .graphicsLayer { scaleX = scale.value; scaleY = scale.value },
                 )
             }
+        }
+        if (shownCompleted.isNotEmpty()) {
+            // Contador ao lado da pilha: quantas das 8 sequências já foram fechadas.
+            Text(
+                "${shownCompleted.size}/${Rules.SETS}",
+                style = MaterialTheme.typography.titleMedium.merge(TabularNumbers),
+                color = LocalTableColors.current.highlight,
+                modifier = Modifier.offset(
+                    x = columnX(0) + cardWidth * 0.3f * (shownCompleted.size - 1) + cardWidth + 8.dp,
+                    y = cardHeight / 2 - 12.dp,
+                ),
+            )
         }
 
         // Monte: um verso por distribuição restante, abrindo para a esquerda. Enquanto cartas
@@ -283,7 +341,8 @@ fun Table(
  */
 private fun columnOffsets(cards: List<Card>, cardHeight: Dp, available: Dp): List<Dp> {
     val down = cardHeight * 0.16f
-    val up = cardHeight * 0.32f
+    // Passo das cartas abertas: deixa o valor grande inteiro à mostra, mesmo com a sombra da carta de cima.
+    val up = cardHeight * 0.42f
     val natural = cards.dropLast(1).fold(0.dp) { acc, card -> acc + if (card.faceUp) up else down }
     val room = available - cardHeight
     val scale = if (natural > room && natural > 0.dp) (room / natural).coerceAtLeast(0.05f) else 1f
@@ -431,14 +490,26 @@ private fun GhostCard(ghost: Ghost, width: Dp, onDone: () -> Unit) {
     val y = remember { Animatable(ghost.from.y, Dp.VectorConverter) }
     val flip = remember { Animatable(if (ghost.card.faceUp) 0f else 180f) }
     val currentOnDone by rememberUpdatedState(onDone)
+    // Cada trecho dura um tempo fixo, mesmo para a carta que já está no lugar: assim as 13
+    // cartas de uma sequência passam juntas de um trecho para o outro.
+    suspend fun leg(target: DpOffset, millis: Int) = coroutineScope {
+        val spec = tween<Dp>(millis, easing = FastOutSlowInEasing)
+        launch { x.animateTo(target.x, spec) }
+        launch { y.animateTo(target.y, spec) }
+        launch { delay(millis.toLong()) }
+    }
     LaunchedEffect(Unit) {
-        delay(ghost.delayMillis.toLong())
-        // Voltando ao monte, primeiro vira no lugar e só então voa.
-        if (ghost.toStock) flip.animateTo(180f, FlipSpec)
-        coroutineScope {
-            launch { x.animateTo(ghost.to.x, MoveSpec) }
-            launch { y.animateTo(ghost.to.y, MoveSpec) }
+        if (ghost.toStock) {
+            // Voltando ao monte, primeiro vira no lugar e só então voa.
+            delay(ghost.delayMillis.toLong())
+            flip.animateTo(180f, FlipSpec)
+        } else {
+            ghost.landing?.let { leg(it, MOVE_MILLIS) }
+            delay(120)
+            ghost.gather?.let { leg(it, 180) }
+            delay(ghost.delayMillis.toLong())
         }
+        leg(ghost.to, 220)
         currentOnDone()
     }
     PlayingCard(

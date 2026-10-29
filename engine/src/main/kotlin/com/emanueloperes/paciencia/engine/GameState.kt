@@ -9,7 +9,7 @@ data class GameState(
     val seed: Long,
     /** As 10 colunas da mesa; o último elemento de cada lista é a carta de cima. */
     val tableau: List<List<Card>>,
-    /** Monte: cada distribuição tira as 10 primeiras cartas, uma para cada coluna. */
+    /** Monte: cada distribuição tira as 10 primeiras cartas, uma para cada coluna (vazias inclusive). */
     val stock: List<Card>,
     /** Naipes das sequências completas, na ordem em que saíram da mesa. */
     val completed: List<Suit> = emptyList(),

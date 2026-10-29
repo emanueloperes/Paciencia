@@ -123,11 +123,19 @@ class RulesTest {
     }
 
     @Test
-    fun `não pode distribuir com coluna vazia nem sem monte`() {
+    fun `distribuir só depende de haver monte`() {
         val stock = List(10) { card(1, up = false) }
-        assertFalse(Rules.canDeal(state(emptyList(), stock = stock)))
         assertFalse(Rules.canDeal(state()))
         assertTrue(Rules.canDeal(state(stock = stock)))
+        assertTrue(Rules.canDeal(state(emptyList(), stock = stock)))
+    }
+
+    @Test
+    fun `coluna vazia recebe carta ao distribuir`() {
+        val stock = List(10) { card(it % 13 + 1, up = false) }
+        val after = Rules.apply(state(emptyList(), stock = stock), Deal)
+        assertEquals(listOf(stock[0].id), after.tableau[0].map { it.id })
+        assertTrue(after.tableau[0].single().faceUp)
     }
 
     @Test
